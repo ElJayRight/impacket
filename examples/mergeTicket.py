@@ -60,9 +60,10 @@ def check_info(tickets):
     spns = [cred['server'].prettyPrint().split(b'@')[0].decode('utf-8') for cred in creds]
 
     usernames = [cred['client'].prettyPrint().split(b'@')[0].decode('utf-8') for cred in creds]
-
+    domains = [cred['client'].prettyPrint().decode('utf-8') for cred in creds]
     services = [spn.split("/")[0] for spn in spns]
     machines = [spn.split("/")[1] for spn in spns]
+
 
     if len(set(usernames)) != 1:
         logging.error("Usernames are not the same.")
@@ -86,9 +87,10 @@ def check_info(tickets):
     logging.info("%-30s: %s" % ("Hostname", machines[0]))
     for id,service in enumerate(services):
         logging.info("%-30s: %s" % (f"Service Of Ticket {id+1}", service))
-    return True
-
-def write_new_ticket(tickets, output_file):
+    length = 31 + len(domains[0])
+    return length
+    
+def write_new_ticket(tickets, output_file,length):
     master_ticket = tickets[0]
     other_tickets = tickets[1:]
     with open(master_ticket, 'rb') as main_ticket_data:
@@ -96,7 +98,7 @@ def write_new_ticket(tickets, output_file):
 
     for ticket in other_tickets:
         with open(ticket, 'rb') as ticket_data:
-            _ = ticket_data.read(60)
+            _ = ticket_data.read(length)
             data += ticket_data.read()
     
     with open(output_file, 'wb') as output:
@@ -110,12 +112,12 @@ def main():
     init_logger(args)
     ccaches = [CCache.loadFile(ticket) for ticket in args.tickets]
     logging.debug("Number of tickets: %s", (len(ccaches)))
-
-    if not check_info(ccaches):
+    length = check_info(ccaches)
+    if not length:
         sys.exit(1)
 
     logging.info("Writing to output file: %s", (args.output))
-    write_new_ticket(args.tickets, args.output)
+    write_new_ticket(args.tickets, args.output, length)
     logging.info("Done!")
     return
 
