@@ -347,6 +347,26 @@ class Credential:
         tgs['sessionKey'] = crypto.Key(cipher.enctype, self['key']['keyvalue'])
         return tgs
 
+def updateTicket(ticket, sessionKey):
+    #Need to update to check if spn is already in ticket.
+    ticket_name = os.getenv("KRB5CCNAME")
+    import logging
+    logging.info('Updating ticket stored in %s' % (ticket_name))
+    ccache = CCache()
+
+    ccache.fromTGS(ticket, sessionKey, sessionKey)
+    other_ticket = ccache
+    master_ticket = CCache.loadFile(ticket_name)
+    
+    cred = master_ticket.credentials[0]
+    domain = cred['client'].prettyPrint().decode('utf-8')
+    length = 31 + len(domain)
+    
+    data = master_ticket.getData()
+    data += other_ticket.getData()[length:]
+    
+    with open(ticket_name, 'wb') as output:
+        output.write(data)
 
 class CCache:
     # https://web.mit.edu/kerberos/krb5-devel/doc/formats/ccache_file_format.html
@@ -419,7 +439,26 @@ class CCache:
                 LOG.debug('Returning cached credential for %s' % c['server'].prettyPrint().upper().decode('utf-8'))
                 return c
         LOG.debug('SPN %s not found in cache' % server.upper())
-        if anySPN is True:
+        cred = self.credentials[0]
+        service = cred['server'].prettyPrint().split(b'@')[0].decode('utf-8').split("/")[0]
+        
+        
+
+        if service == 'krbtgt':
+            domain = server.split("@")[1]
+            domain, _, TGT, _ = CCache.parseFile(domain)
+            serverName = types.Principal(server, type=constants.PrincipalNameType.NT_SRV_INST.value)
+            from impacket.krb5.kerberosv5 import getKerberosTGS
+            tgt, cipher, sessionKey = TGT['KDC_REP'], TGT['cipher'], TGT['sessionKey']
+            tgs, _, oldSessionKey, _ = getKerberosTGS(serverName, domain, domain, tgt, cipher, sessionKey)
+            updateTicket(tgs, oldSessionKey)
+            #pull the vaule on c
+            ccache = CCache()
+
+            ccache.fromTGS(tgs, oldSessionKey, oldSessionKey)
+            return ccache.credentials[0]
+        
+        elif anySPN is True:
             LOG.debug('AnySPN is True, looking for another suitable SPN')
             for c in self.credentials:
                 # Let's search for any TGT/TGS that matches the server w/o the SPN's service type/port, returns

@@ -64,6 +64,25 @@ from impacket.krb5.types import Principal, KerberosTime, Ticket
 from impacket.ntlm import compute_nthash
 from impacket.winregistry import hexdump
 
+def updateTicket(ticket, sessionKey):
+    #Need to update to check if spn is already in ticket.
+    ticket_name = os.getenv("KRB5CCNAME")
+    logging.info('Updating ticket stored in %s' % (ticket_name))
+    ccache = CCache()
+
+    ccache.fromTGS(ticket, sessionKey, sessionKey)
+    other_ticket = ccache
+    master_ticket = CCache.loadFile(ticket_name)
+    
+    cred = master_ticket.credentials[0]
+    domain = cred['client'].prettyPrint().decode('utf-8')
+    length = 31 + len(domain)
+    
+    data = master_ticket.getData()
+    data += other_ticket.getData()[length:]
+    
+    with open(ticket_name, 'wb') as output:
+        output.write(data)
 
 class GETST:
     def __init__(self, target, password, domain, options):
@@ -80,13 +99,15 @@ class GETST:
         self.__saveFileName = None
         if options.hashes is not None:
             self.__lmhash, self.__nthash = options.hashes.split(':')
-
+    
+    
     def saveTicket(self, ticket, sessionKey):
         logging.info('Saving ticket in %s' % (self.__saveFileName + '.ccache'))
         ccache = CCache()
 
         ccache.fromTGS(ticket, sessionKey, sessionKey)
         ccache.saveFile(self.__saveFileName + '.ccache')
+        
 
     def doS4U2ProxyWithAdditionalTicket(self, tgt, cipher, oldSessionKey, sessionKey, nthash, aesKey, kdcHost, additional_ticket_path):
         if not os.path.isfile(additional_ticket_path):
@@ -620,6 +641,7 @@ class GETST:
         tgt = None
 
         # Do we have a TGT cached?
+        
         domain, _, TGT, _ = CCache.parseFile(self.__domain)
 
         # ToDo: Check this TGT belogns to the right principal
@@ -640,9 +662,21 @@ class GETST:
         if self.__options.impersonate is None:
             # Normal TGS interaction
             logging.info('Getting ST for user')
-            serverName = Principal(self.__options.spn, type=constants.PrincipalNameType.NT_SRV_INST.value)
-            tgs, cipher, oldSessionKey, sessionKey = getKerberosTGS(serverName, domain, self.__kdcHost, tgt, cipher, sessionKey)
-            self.__saveFileName = self.__user
+            #HERE IT IS
+            spns = self.__options.spn.split(",")
+            for spn in spns:
+                logging.debug(spn)
+                service, FQDN = spn.split("/")
+                hostname = FQDN.split(".")[0]
+                serverName = Principal(spn, type=constants.PrincipalNameType.NT_SRV_INST.value)
+                tgs, _, oldSessionKey, _ = getKerberosTGS(serverName, domain, self.__kdcHost, tgt, cipher, sessionKey)
+                
+                if os.getenv("KRB5CCNAME"):
+                    updateTicket(tgs, oldSessionKey)
+                else:
+                    self.__saveFileName = f"{hostname}-{self.__user}-{service}"
+                    self.saveTicket(tgs, oldSessionKey)
+            return
         else:
             # Here's the rock'n'roll
             try:
